@@ -1,8 +1,9 @@
+```mermaid
 graph LR
-subgraph Client
-direction LR
-C[Browser / Mobile]
-end
+    subgraph Client
+        direction LR
+        C[Browser / Mobile]
+    end
 
     subgraph "SaaS API Server (Spring Boot)"
         direction LR
