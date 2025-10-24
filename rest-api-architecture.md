@@ -24,7 +24,8 @@ graph LR
 
     subgraph External Services
         direction TB
-        DB[("Database<br>PostgreSQL")]; // Database symbol
+        %% Simplified Database Node Definition
+        DB[("Database<br>PostgreSQL")]
         ST[Stripe API];
     end
 
