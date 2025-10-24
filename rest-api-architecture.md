@@ -7,13 +7,13 @@ graph LR
 
     subgraph "SaaS API Server (Spring Boot)"
         direction LR
-        SS[Spring Security Filter Chain] --> CL[Controller Layer\n(e.g., TodoController)];
-        CL --> SL[Service Layer\n(e.g., TodoService)];
-        SL --> RL[Repository Layer\n(e.g., TodoRepository)];
+        SS[Spring Security Filter Chain] --> CL["Controller Layer<br>(e.g., TodoController)"];
+        CL --> SL["Service Layer<br>(e.g., TodoService)"];
+        SL --> RL["Repository Layer<br>(e.g., TodoRepository)"];
 
         subgraph AOP
           direction TB
-          A[TenantFilterAspect\n(Intercepts @Transactional)]
+          A["TenantFilterAspect<br>(Intercepts @Transactional)"]
         end
 
         CL -- Calls --> SL;
@@ -24,14 +24,14 @@ graph LR
 
     subgraph External Services
         direction TB
-        DB[(Database\nPostgreSQL)];
+        DB[("Database<br>PostgreSQL")]; // Database symbol
         ST[Stripe API];
     end
 
-    C -- "1. HTTP Request\n(e.g., GET /api/todos)" --> SS;
-    SS -- "2. Validate JWT\nSet TenantContext" --> CL;
-    RL -- "5. SQL Query\n(Auto-filtered)" --> DB;
-    SL -- "Calls External API\n(e.g., POST /create-checkout)" --> ST;
+    C -- "1. HTTP Request<br>(e.g., GET /api/todos)" --> SS;
+    SS -- "2. Validate JWT<br>Set TenantContext" --> CL;
+    RL -- "5. SQL Query<br>(Auto-filtered)" --> DB;
+    SL -- "Calls External API<br>(e.g., POST /create-checkout)" --> ST;
 
     classDef default fill:#fffbe6,stroke:#333,stroke-width:2px;
     classDef client fill:transparent,stroke:#333,stroke-width:2px;
