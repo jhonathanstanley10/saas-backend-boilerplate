@@ -4,7 +4,6 @@
 # This is the most important rule. It ignores your local properties
 # file, which contains secrets.
 # ===================================================================
-application.properties
 
 
 # ===================================================================
