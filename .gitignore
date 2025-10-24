@@ -1,0 +1,70 @@
+# ===================================================================
+# Sensitive Configuration
+#
+# This is the most important rule. It ignores your local properties
+# file, which contains secrets.
+# ===================================================================
+application.properties
+
+
+# ===================================================================
+# Build Output & Logs
+#
+# Ignores compiled code, build artifacts, and log files.
+# ===================================================================
+target/
+build/
+*.log
+
+
+# ===================================================================
+# Maven Wrapper
+#
+# Ignores the downloaded .jar file, but not the scripts (mvnw)
+# or the properties file, which should be committed.
+# ===================================================================
+.mvn/wrapper/maven-wrapper.jar
+
+
+# ===================================================================
+# IDE Specific Files
+# (Copied from your original file)
+# ===================================================================
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### STS / Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings/
+.springBeans
+.sts4-cache
+
+### NetBeans ###
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+
+# ===================================================================
+# Operating System Files
+#
+# Ignores common system metadata files.
+# ===================================================================
+.DS_Store
+Thumbs.db
+
+
+# ===================================================================
+# Other
+# (From your original file)
+# ===================================================================
+HELP.md

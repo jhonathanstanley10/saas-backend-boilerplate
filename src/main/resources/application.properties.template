@@ -1,0 +1,35 @@
+# Application
+server.port=8080
+spring.application.name=backend-boilerplate
+frontend.base-url=${FRONTEND_BASE_URL:http://localhost:3000}
+
+# Database Configuration (PostgreSQL)
+spring.datasource.url=jdbc:postgresql://localhost:5432/saas_db
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD:postgres}
+spring.datasource.driver-class-name=org.postgresql.Driver
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.properties.hibernate.format_sql=true
+spring.jpa.show-sql=true
+spring.jpa.properties.hibernate.default_entity_manager_factory_builder.interceptor=br.com.stanleydev.backendboilerplate.tenant.TenantFilterInterceptor
+
+# JWT Secrets
+application.jwt.secret-key=${APPLICATION_JWT_SECRET_KEY}
+application.jwt.expiration-ms=900000
+application.jwt.refresh-token-expiration-ms=604800000
+
+
+# Stripe API Keys
+stripe.api.secret-key=${STRIPE_API_SECRET_KEY}
+stripe.api.price-id=${STRIPE_API_PRICE_ID}
+stripe.api.webhook-secret=${STRIPE_API_WEBHOOK_SECRET}
+
+
+# Email Configuration
+spring.mail.host=${SPRING_MAIL_HOST:smtp.gmail.com}
+spring.mail.port=${SPRING_MAIL_PORT:587}
+spring.mail.username=${SPRING_MAIL_USERNAME}
+spring.mail.password=${SPRING_MAIL_PASSWORD}
+spring.mail.from=${spring.mail.username}
+spring.mail.properties.mail.smtp.auth=true
+spring.mail.properties.mail.smtp.starttls.enable=true

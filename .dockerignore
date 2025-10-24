@@ -1,0 +1,15 @@
+# Ignore build outputs
+target/
+build/
+
+# Ignore Docker files
+Dockerfile
+.dockerignore
+
+# Ignore Git files
+.git/
+.gitignore
+
+# Ignore IDE files
+.idea/
+*.iml
