@@ -60,12 +60,12 @@ This boilerplate includes everything you need to get a subscription-based applic
 
 1.  **Clone the repository:**
     ```sh
-    git clone https://github.com/jhonathanstanley10/backend-boilerplate.git
-    cd backend-boilerplate
+    git clone https://github.com/jhonathanstanley10/saas-backend-boilerplate
+    cd saas-backend-boilerplate
     ```
 
 2.  **Create your database:**
-    Create a new PostgreSQL database (e.g., `boilerplate_db`).
+    Create a new PostgreSQL database (e.g., `saas_db`).
 
 3.  **Configure your secrets:**
     Copy the `application.properties.template` to a new file named `application.properties`.
@@ -115,6 +115,8 @@ This is the best way to run the application in a production-like environment. It
       -e STRIPE_API_WEBHOOK_SECRET=whsec_... \
       \
       # --- Email Credentials ---
+      -e SPRING_MAIL_USERNAME=smtp.gmail.com \
+      -e SPRING_MAIL_PORT=587 \
       -e SPRING_MAIL_USERNAME=your-email@gmail.com \
       -e SPRING_MAIL_PASSWORD=your-gmail-app-password \
       \
