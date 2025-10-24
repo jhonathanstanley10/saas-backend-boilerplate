@@ -1,0 +1,86 @@
+# This name will appear in the "Actions" tab of your GitHub repository
+name: Java CI - Build and Test
+
+# --- Triggers ---
+# MODIFIED: This workflow now runs on all branches EXCEPT main,
+# and on all pull requests targeting main.
+on:
+  push:
+    branches-ignore:
+      - 'main'
+
+  pull_request:
+    branches:
+      - 'main'
+
+# --- Jobs ---
+jobs:
+  build-and-test:
+    # Use the latest version of Ubuntu as the runner environment
+    runs-on: ubuntu-latest
+
+    # --- Service Container ---
+    # This section spins up a PostgreSQL database *before* the steps run
+    services:
+      postgres:
+        # Use a standard PostgreSQL image
+        image: postgres:15
+        # Set environment variables for the database
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        # Map the container's 5432 port to the runner's 5432 port
+        ports:
+          - 5432:5432
+        # Health check to ensure the database is ready before tests start
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # --- Steps ---
+    # These are the commands the runner will execute
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin' # Use Eclipse Temurin, matching your Dockerfile
+
+      - name: Cache Maven packages
+        # This speeds up builds by caching dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      - name: Run Tests
+        # This is the most important step
+        # We provide all environment variables your app needs to run the tests
+        env:
+          # --- Database ---
+          # Use the details from the 'services' section above
+          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/testdb
+          DB_USERNAME: testuser
+          DB_PASSWORD: testpassword
+
+          # --- Application Secrets ---
+          # These are loaded from GitHub's secure "Secrets" store
+          APPLICATION_JWT_SECRET_KEY: ${{ secrets.APPLICATION_JWT_SECRET_KEY }}
+          STRIPE_API_SECRET_KEY: ${{ secrets.STRIPE_API_SECRET_KEY }}
+          STRIPE_API_PRICE_ID: ${{ secrets.STRIPE_API_PRICE_ID }}
+          STRIPE_API_WEBHOOK_SECRET: ${{ secrets.STRIPE_API_WEBHOOK_SECRET }}
+          SPRING_MAIL_USERNAME: ${{ secrets.SPRING_MAIL_USERNAME }}
+          SPRING_MAIL_PASSWORD: ${{ secrets.SPRING_MAIL_PASSWORD }}
+          FRONTEND_BASE_URL: http://localhost:3000
+
+        # Execute the Maven test command
+        run: ./mvnw test
+
