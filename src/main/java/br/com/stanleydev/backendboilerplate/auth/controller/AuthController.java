@@ -2,6 +2,8 @@ package br.com.stanleydev.backendboilerplate.auth.controller;
 
 import br.com.stanleydev.backendboilerplate.auth.dto.*;
 import br.com.stanleydev.backendboilerplate.auth.service.AuthService;
+import br.com.stanleydev.backendboilerplate.exception.TooManyRequestsException;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -49,5 +51,10 @@ public class AuthController {
     public ResponseEntity<Void> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
         authService.handleResetPassword(request);
         return ResponseEntity.ok().build();
+    }
+
+
+    public String rateLimitedFallback(String input, RequestNotPermitted ex) {
+        throw new TooManyRequestsException("Rate limit exceeded");
     }
 }

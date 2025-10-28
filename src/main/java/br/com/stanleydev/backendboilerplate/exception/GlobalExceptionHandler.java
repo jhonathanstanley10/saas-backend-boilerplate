@@ -2,6 +2,7 @@ package br.com.stanleydev.backendboilerplate.exception;
 
 import br.com.stanleydev.backendboilerplate.exception.dto.ErrorResponse;
 import br.com.stanleydev.backendboilerplate.exception.dto.ValidationErrorResponse;
+import io.github.resilience4j.ratelimiter.RequestNotPermitted;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpHeaders;
@@ -63,6 +64,13 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return new ResponseEntity<>(errorResponse, HttpStatus.NOT_FOUND);
     }
 
+    @ExceptionHandler({RequestNotPermitted.class})
+    public ResponseEntity<String> handleRequestNotPermitted(RequestNotPermitted ex) {
+        // You can customize the response body
+        return ResponseEntity
+                .status(HttpStatus.TOO_MANY_REQUESTS)
+                .body("Too many requests - please try again later. Resilience4j blocked the request.");
+    }
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<ErrorResponse> handleBadCredentials(BadCredentialsException ex) {
