@@ -59,9 +59,6 @@ public class AdminService {
         if (request.getRole() != null) {
             user.setRole(request.getRole());
         }
-        if (request.getSubscriptionStatus() != null) {
-            user.setSubscriptionStatus(request.getSubscriptionStatus());
-        }
 
         User updatedUser = userRepository.save(user);
         return userService.mapToUserResponse(updatedUser);

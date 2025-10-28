@@ -3,7 +3,13 @@ package br.com.stanleydev.backendboilerplate.auth.service;
 import br.com.stanleydev.backendboilerplate.auth.dto.*;
 import br.com.stanleydev.backendboilerplate.exception.EmailAlreadyExistsException;
 import br.com.stanleydev.backendboilerplate.exception.ResourceNotFoundException;
+import br.com.stanleydev.backendboilerplate.organization.model.Membership;
+import br.com.stanleydev.backendboilerplate.organization.model.Organization;
+import br.com.stanleydev.backendboilerplate.organization.model.OrganizationRole;
+import br.com.stanleydev.backendboilerplate.organization.repository.MembershipRepository;
+import br.com.stanleydev.backendboilerplate.organization.repository.OrganizationRepository;
 import br.com.stanleydev.backendboilerplate.security.JwtService;
+import br.com.stanleydev.backendboilerplate.tenant.TenantContext;
 import br.com.stanleydev.backendboilerplate.user.model.Role;
 import br.com.stanleydev.backendboilerplate.user.model.SubscriptionStatus;
 import br.com.stanleydev.backendboilerplate.user.model.User;
@@ -20,6 +26,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -35,6 +42,8 @@ public class AuthService {
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
     private final EmailService emailService;
+    private final OrganizationRepository organizationRepository;
+    private final MembershipRepository membershipRepository;
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -43,25 +52,41 @@ public class AuthService {
             throw new EmailAlreadyExistsException("Email already taken");
         }
 
-        String newTenantId = UUID.randomUUID().toString();
+
 
         User user = User.builder()
                 .firstName(request.getFirstName())
                 .lastName(request.getLastName())
                 .email(request.getEmail())
                 .passwordHash(passwordEncoder.encode(request.getPassword()))
-                .subscriptionStatus(SubscriptionStatus.FREE)
                 .role(Role.ROLE_USER) // Default role
-                .tenantId(newTenantId)
                 .build();
+        User savedUser = userRepository.save(user);
 
-        String accessToken = jwtService.generateAccessToken(user);
-        String refreshToken = jwtService.generateRefreshToken(user);
+        String newTenantId = UUID.randomUUID().toString();
 
-        user.setRefreshToken(refreshToken);
-        user.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());
+        Organization organization = Organization.builder()
+                .tenantId(newTenantId)
+                .name( (request.getFirstName() != null ? request.getFirstName() + "'s" : "My") + " Workspace") // Default name
+                .ownerUserId(savedUser.getId())
+                .subscriptionStatus(SubscriptionStatus.FREE)
+                .build();
+        Organization savedOrganization = organizationRepository.save(organization);
 
-        userRepository.save(user);
+        Membership membership = Membership.builder()
+                .userId(savedUser.getId())
+                .organizationId(savedOrganization.getId())
+                .role(OrganizationRole.OWNER) // First user is the owner
+                .build();
+        membershipRepository.save(membership);
+
+        String accessToken = jwtService.generateAccessToken(savedUser, newTenantId);
+        String refreshToken = jwtService.generateRefreshToken(savedUser);
+
+        savedUser.setRefreshToken(refreshToken);
+        savedUser.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());
+        userRepository.save(savedUser);
+
 
         return AuthResponse.builder()
                 .token(accessToken)
@@ -81,12 +106,27 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found after authentication"));
 
-        String accessToken = jwtService.generateAccessToken(user);
+        // CRITICAL CHANGE: Find the Organization(s) the user belongs to
+        List<Membership> memberships = membershipRepository.findByUserId(user.getId());
+        if (memberships.isEmpty()) {
+            // Should not happen if registration is correct, but handle it
+            log.error("User {} authenticated but has no organization memberships.", user.getEmail());
+            throw new IllegalStateException("User has no organization membership.");
+        }
+
+        // *** Simplification for now: Use the *first* organization found ***
+        // In a real multi-org app, you'd need a way for the user to select which org to log into.
+        Membership firstMembership = memberships.get(0);
+        Organization organization = organizationRepository.findById(firstMembership.getOrganizationId())
+                .orElseThrow(() -> new IllegalStateException("Organization not found for membership."));
+
+        // Generate Tokens using the Organization's Tenant ID
+        String accessToken = jwtService.generateAccessToken(user, organization.getTenantId()); // Use Org's tenantId
         String refreshToken = jwtService.generateRefreshToken(user);
 
+        // Save refresh token to user (as before)
         user.setRefreshToken(refreshToken);
         user.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());
-
         userRepository.save(user);
 
         return AuthResponse.builder()
@@ -95,6 +135,10 @@ public class AuthService {
                 .build();
     }
 
+    // --- Refresh Token Logic ---
+    // Needs modification if user can belong to multiple orgs.
+    // For now, it assumes the *new* access token should be for the *same* tenantId
+    // as the *old* one (which is implicitly stored in TenantContext if the old token was valid).
     @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         String requestRefreshToken = request.getRefreshToken();
@@ -103,14 +147,26 @@ public class AuthService {
                 .orElseThrow(() -> new BadCredentialsException("Invalid refresh token"));
 
         if (user.getRefreshTokenExpiry().isBefore(Instant.now())) {
+            user.setRefreshToken(null); // Clear expired token
+            user.setRefreshTokenExpiry(null);
             userRepository.save(user);
             throw new BadCredentialsException("Refresh token has expired");
         }
 
+        // *** Need the tenantId to generate the new access token ***
+        // Get it from the current context (set by the *old* access token's filter run)
+        String currentTenantId = TenantContext.getCurrentTenant();
+        if (currentTenantId == null) {
+            // Fallback: If context is missing, maybe fetch the user's first org again? Risky.
+            // Better to enforce that refresh must happen while an old token is still somewhat valid.
+            log.warn("Cannot refresh token for user {} without tenantId in context.", user.getEmail());
+            throw new BadCredentialsException("Cannot determine tenant context for refresh.");
+        }
 
-        String newAccessToken = jwtService.generateAccessToken(user);
+        // Generate new access token for the SAME tenant
+        String newAccessToken = jwtService.generateAccessToken(user, currentTenantId);
 
-
+        // Rotate the refresh token
         String newRefreshToken = jwtService.generateRefreshToken(user);
         user.setRefreshToken(newRefreshToken);
         user.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());

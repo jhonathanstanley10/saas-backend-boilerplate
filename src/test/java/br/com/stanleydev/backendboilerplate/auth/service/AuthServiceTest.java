@@ -1,34 +1,57 @@
 package br.com.stanleydev.backendboilerplate.auth.service;
 
 import br.com.stanleydev.backendboilerplate.auth.dto.AuthResponse;
+import br.com.stanleydev.backendboilerplate.auth.dto.LoginRequest;
+import br.com.stanleydev.backendboilerplate.auth.dto.RefreshTokenRequest;
 import br.com.stanleydev.backendboilerplate.auth.dto.RegisterRequest;
+import br.com.stanleydev.backendboilerplate.email.EmailService; // Ensure EmailService is imported if used in other tests
 import br.com.stanleydev.backendboilerplate.exception.EmailAlreadyExistsException;
+import br.com.stanleydev.backendboilerplate.exception.ResourceNotFoundException;
+import br.com.stanleydev.backendboilerplate.organization.model.Membership;
+import br.com.stanleydev.backendboilerplate.organization.model.Organization;
+import br.com.stanleydev.backendboilerplate.organization.model.OrganizationRole;
+import br.com.stanleydev.backendboilerplate.organization.repository.MembershipRepository;
+import br.com.stanleydev.backendboilerplate.organization.repository.OrganizationRepository;
 import br.com.stanleydev.backendboilerplate.security.JwtService;
+import br.com.stanleydev.backendboilerplate.tenant.TenantContext; // Needed for refresh token test
 import br.com.stanleydev.backendboilerplate.user.model.Role;
 import br.com.stanleydev.backendboilerplate.user.model.User;
 import br.com.stanleydev.backendboilerplate.user.repository.UserRepository;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic; // Needed for TenantContext
+import org.mockito.Mockito; // Needed for TenantContext
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication; // Import Authentication
 import org.springframework.security.crypto.password.PasswordEncoder;
+import br.com.stanleydev.backendboilerplate.auth.dto.ForgotPasswordRequest; // Ensure this is imported if used
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq; // Import eq for argument matching
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class) // Initializes mocks
 class AuthServiceTest {
 
-    // These are the dependencies of AuthService, so we mock them
+    // --- Mocks for Dependencies ---
     @Mock
     private UserRepository userRepository;
     @Mock
@@ -37,74 +60,338 @@ class AuthServiceTest {
     private JwtService jwtService;
     @Mock
     private AuthenticationManager authenticationManager;
+    @Mock
+    private OrganizationRepository organizationRepository; // Added
+    @Mock
+    private MembershipRepository membershipRepository; // Added
+    @Mock
+    private EmailService emailService; // Added for forgot password test
+    @Mock
+    private Authentication authentication; // Mock the return type of authenticate
 
-    // This tells Mockito to inject the mocks above into our AuthService instance
+    // Inject mocks into the service under test
     @InjectMocks
     private AuthService authService;
 
+    // --- Test Data ---
     private RegisterRequest registerRequest;
+    private LoginRequest loginRequest;
+    private User testUser;
+    private Organization testOrganization;
+    private Membership testMembership;
+    private RefreshTokenRequest refreshTokenRequest;
 
     @BeforeEach
     void setUp() {
-        // Create a re-usable request object for our tests
+        // Create re-usable request objects for our tests
         registerRequest = RegisterRequest.builder()
+                .firstName("Test")
+                .lastName("User")
                 .email("test@example.com")
                 .password("password123")
                 .build();
+
+        loginRequest = LoginRequest.builder()
+                .email("test@example.com")
+                .password("password123")
+                .build();
+
+        testUser = User.builder()
+                .id(UUID.randomUUID())
+                .email("test@example.com")
+                .passwordHash("hashed-password")
+                .role(Role.ROLE_USER)
+                .build();
+
+        // Ensure consistent IDs for assertion
+        UUID orgId = UUID.randomUUID();
+        testOrganization = Organization.builder()
+                .id(orgId) // Use a fixed ID for the test
+                .tenantId(UUID.randomUUID().toString())
+                .name("Test Workspace")
+                .ownerUserId(testUser.getId()) // Set owner ID for consistency
+                .build();
+
+        testMembership = Membership.builder()
+                .id(UUID.randomUUID())
+                .userId(testUser.getId())
+                .organizationId(orgId) // Use the same fixed ID
+                .role(OrganizationRole.OWNER)
+                .build();
+
+        refreshTokenRequest = RefreshTokenRequest.builder()
+                .refreshToken("valid-refresh-token")
+                .build();
+
+        // Clear TenantContext before each test (important for static mock)
+        TenantContext.clear();
     }
+
+    // Clear TenantContext after each test
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
+    }
+
+
+    // --- Registration Tests ---
 
     @Test
     void register_shouldSucceed_whenEmailIsNotTaken() {
-        // --- ARRANGE ---
-        // 1. Mock the "email not found" check
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.empty());
+        // Arrange
+        when(userRepository.findByEmail(registerRequest.getEmail())).thenReturn(Optional.empty());
+        when(passwordEncoder.encode(registerRequest.getPassword())).thenReturn("hashed-password");
 
-        // 2. Mock the password encoding
-        when(passwordEncoder.encode("password123")).thenReturn("hashed-password");
-
-        // 3. Mock the token generation
-        when(jwtService.generateAccessToken(any(User.class))).thenReturn("mock-access-token");
-        when(jwtService.generateRefreshToken(any(User.class))).thenReturn("mock-refresh-token");
-        when(jwtService.getRefreshTokenExpiry()).thenReturn(Instant.now());
-
-        // 4. Create an ArgumentCaptor to capture the User object sent to save()
+        // --- Mock saving User ---
+        // Capture the user argument, assign an ID, and return it
         ArgumentCaptor<User> userCaptor = ArgumentCaptor.forClass(User.class);
+        final UUID generatedUserId = UUID.randomUUID(); // Generate ID upfront
+        when(userRepository.save(userCaptor.capture())).thenAnswer(invocation -> {
+            User userToSave = invocation.getArgument(0);
+            // Simulate setting ID only if it's null (first save)
+            if (userToSave.getId() == null) {
+                userToSave.setId(generatedUserId);
+            }
+            // Simulate setting refresh token on the second save call
+            if (userCaptor.getAllValues().size() > 1) {
+                userToSave.setRefreshToken("mock-refresh-token");
+                userToSave.setRefreshTokenExpiry(Instant.now().plus(7, ChronoUnit.DAYS));
+            }
+            return userToSave;
+        });
 
-        // --- ACT ---
+
+        // --- Mock saving Organization ---
+        // Capture the org argument, assign an ID, and return it
+        ArgumentCaptor<Organization> orgCaptor = ArgumentCaptor.forClass(Organization.class);
+        final UUID generatedOrgId = UUID.randomUUID(); // Generate ID upfront
+        when(organizationRepository.save(orgCaptor.capture())).thenAnswer(invocation -> {
+            Organization orgToSave = invocation.getArgument(0);
+            orgToSave.setId(generatedOrgId); // Assign the consistent ID
+            return orgToSave;
+        });
+
+        // --- Mock saving Membership ---
+        // Capture the membership argument, assign an ID, and return it
+        ArgumentCaptor<Membership> membershipCaptor = ArgumentCaptor.forClass(Membership.class);
+        when(membershipRepository.save(membershipCaptor.capture())).thenAnswer(invocation -> {
+            Membership membershipToSave = invocation.getArgument(0);
+            membershipToSave.setId(UUID.randomUUID());
+            return membershipToSave;
+        });
+
+        // Mock token generation (now requires tenantId)
+        when(jwtService.generateAccessToken(any(User.class), anyString())).thenReturn("mock-access-token");
+        when(jwtService.generateRefreshToken(any(User.class))).thenReturn("mock-refresh-token");
+        when(jwtService.getRefreshTokenExpiry()).thenReturn(Instant.now().plus(7, ChronoUnit.DAYS));
+
+
+        // Act
         AuthResponse response = authService.register(registerRequest);
 
-        // --- ASSERT ---
-        // 1. Check the response is correct
+        // Assert
         assertThat(response).isNotNull();
         assertThat(response.getToken()).isEqualTo("mock-access-token");
         assertThat(response.getRefreshToken()).isEqualTo("mock-refresh-token");
 
-        // 2. Verify that userRepository.save() was called exactly once
-        verify(userRepository, times(1)).save(userCaptor.capture());
+        // Verify saves
+        verify(userRepository, times(2)).save(any(User.class)); // Saved twice
+        verify(organizationRepository, times(1)).save(any(Organization.class));
+        verify(membershipRepository, times(1)).save(any(Membership.class));
 
-        // 3. Check that the User object we "captured" has the correct details
-        User savedUser = userCaptor.getValue();
-        assertThat(savedUser.getEmail()).isEqualTo("test@example.com");
-        assertThat(savedUser.getPasswordHash()).isEqualTo("hashed-password");
-        assertThat(savedUser.getRole()).isEqualTo(Role.ROLE_USER);
-        assertThat(savedUser.getTenantId()).isNotNull();
+        // Assert captured entities
+        User initialUser = userCaptor.getAllValues().get(0); // User passed to first save
+        User finalUser = userCaptor.getAllValues().get(1); // User passed to second save
+        Organization savedOrg = orgCaptor.getValue(); // Org passed to save
+        Membership savedMembership = membershipCaptor.getValue(); // Membership passed to save
+
+        assertThat(finalUser.getEmail()).isEqualTo(registerRequest.getEmail());
+        assertThat(finalUser.getFirstName()).isEqualTo(registerRequest.getFirstName());
+        assertThat(finalUser.getPasswordHash()).isEqualTo("hashed-password");
+        assertThat(finalUser.getRefreshToken()).isEqualTo("mock-refresh-token"); // Check refresh token was set on final save
+
+        assertThat(savedOrg.getName()).isEqualTo("Test's Workspace");
+        assertThat(savedOrg.getTenantId()).isNotNull();
+        assertThat(savedOrg.getOwnerUserId()).isEqualTo(initialUser.getId()); // Owner ID comes from the first user save
+
+        assertThat(savedMembership.getUserId()).isEqualTo(initialUser.getId());
+        // --- THIS ASSERTION SHOULD NOW PASS ---
+        // Compare the ID set on the membership object before save with the ID assigned by the org save mock
+        assertThat(savedMembership.getOrganizationId()).isEqualTo(savedOrg.getId());
+        assertThat(savedMembership.getRole()).isEqualTo(OrganizationRole.OWNER);
+
+        // Verify token generation was called with captured tenantId
+        verify(jwtService).generateAccessToken(any(User.class), eq(savedOrg.getTenantId()));
     }
 
     @Test
     void register_shouldFail_whenEmailIsTaken() {
-        // --- ARRANGE ---
-        // 1. Mock the "email found" check
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(new User()));
+        // Arrange
+        when(userRepository.findByEmail(registerRequest.getEmail())).thenReturn(Optional.of(new User()));
 
-        // --- ACT & ASSERT ---
-        // 1. Assert that the specific exception is thrown
-        assertThrows(EmailAlreadyExistsException.class, () -> {
-            authService.register(registerRequest);
-        });
+        // Act & Assert
+        assertThrows(EmailAlreadyExistsException.class, () -> authService.register(registerRequest));
 
-        // 2. Verify that save() was NEVER called
+        // Verify no saves occurred
+        verify(userRepository, never()).save(any(User.class));
+        verify(organizationRepository, never()).save(any(Organization.class));
+        verify(membershipRepository, never()).save(any(Membership.class));
+    }
+
+    // --- Login Tests ---
+
+    @Test
+    void login_shouldSucceed_withValidCredentialsAndMembership() {
+        // Arrange
+        // 1. Mock AuthenticationManager to succeed by returning an Authentication object
+        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
+                .thenReturn(authentication); // Return the mocked Authentication object
+
+        // 2. Mock finding the user
+        when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(testUser));
+
+        // 3. Mock finding the membership
+        when(membershipRepository.findByUserId(testUser.getId())).thenReturn(List.of(testMembership));
+
+        // 4. Mock finding the organization
+        when(organizationRepository.findById(testMembership.getOrganizationId())).thenReturn(Optional.of(testOrganization));
+
+        // 5. Mock token generation
+        when(jwtService.generateAccessToken(testUser, testOrganization.getTenantId())).thenReturn("mock-access-token");
+        when(jwtService.generateRefreshToken(testUser)).thenReturn("mock-refresh-token");
+        when(jwtService.getRefreshTokenExpiry()).thenReturn(Instant.now().plus(7, ChronoUnit.DAYS));
+
+        // Act
+        AuthResponse response = authService.login(loginRequest);
+
+        // Assert
+        assertThat(response).isNotNull();
+        assertThat(response.getToken()).isEqualTo("mock-access-token");
+        assertThat(response.getRefreshToken()).isEqualTo("mock-refresh-token");
+
+        // Verify user was saved (to update refresh token)
+        verify(userRepository, times(1)).save(testUser);
+        assertThat(testUser.getRefreshToken()).isEqualTo("mock-refresh-token");
+    }
+
+    @Test
+    void login_shouldFail_whenUserHasNoMembership() {
+        // Arrange
+        // Mock AuthenticationManager to succeed
+        when(authenticationManager.authenticate(any(UsernamePasswordAuthenticationToken.class)))
+                .thenReturn(authentication); // Still needs to succeed auth first
+
+        when(userRepository.findByEmail(loginRequest.getEmail())).thenReturn(Optional.of(testUser));
+        when(membershipRepository.findByUserId(testUser.getId())).thenReturn(Collections.emptyList()); // No memberships
+
+        // Act & Assert
+        assertThrows(IllegalStateException.class, () -> authService.login(loginRequest));
+
+        // Verify user was NOT saved
         verify(userRepository, never()).save(any(User.class));
     }
 
-    // You would add more tests here for login(), refreshToken(), etc.
+    @Test
+    void login_shouldFail_withInvalidCredentials() {
+        // Arrange
+        // Mock AuthenticationManager to throw BadCredentialsException
+        doThrow(new BadCredentialsException("Bad credentials")).when(authenticationManager).authenticate(any(UsernamePasswordAuthenticationToken.class));
+
+        // Act & Assert
+        assertThrows(BadCredentialsException.class, () -> authService.login(loginRequest));
+
+        // Verify nothing else was called
+        verify(userRepository, never()).findByEmail(anyString());
+        verify(membershipRepository, never()).findByUserId(any(UUID.class));
+        verify(organizationRepository, never()).findById(any(UUID.class));
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+
+    // --- Refresh Token Tests ---
+
+    @Test
+    void refreshToken_shouldSucceed_withValidTokenAndTenantContext() {
+        // Arrange
+        testUser.setRefreshToken("valid-refresh-token");
+        testUser.setRefreshTokenExpiry(Instant.now().plus(1, ChronoUnit.DAYS));
+        String existingTenantId = testOrganization.getTenantId(); // Use a realistic tenant ID
+
+        when(userRepository.findByRefreshToken("valid-refresh-token")).thenReturn(Optional.of(testUser));
+        when(jwtService.generateAccessToken(testUser, existingTenantId)).thenReturn("new-access-token");
+        when(jwtService.generateRefreshToken(testUser)).thenReturn("new-refresh-token");
+        when(jwtService.getRefreshTokenExpiry()).thenReturn(Instant.now().plus(7, ChronoUnit.DAYS));
+
+        // --- Mock TenantContext ---
+        // Since TenantContext uses static methods, we need Mockito's static mocking
+        try (MockedStatic<TenantContext> mockedTenantContext = Mockito.mockStatic(TenantContext.class)) {
+            mockedTenantContext.when(TenantContext::getCurrentTenant).thenReturn(existingTenantId);
+
+            // Act
+            AuthResponse response = authService.refreshToken(refreshTokenRequest);
+
+            // Assert
+            assertThat(response).isNotNull();
+            assertThat(response.getToken()).isEqualTo("new-access-token");
+            assertThat(response.getRefreshToken()).isEqualTo("new-refresh-token");
+
+            // Verify user was saved with new tokens
+            verify(userRepository, times(1)).save(testUser);
+            assertThat(testUser.getRefreshToken()).isEqualTo("new-refresh-token");
+        } // Static mock is automatically closed here
+    }
+
+    @Test
+    void refreshToken_shouldFail_whenTenantContextIsNull() {
+        // Arrange
+        testUser.setRefreshToken("valid-refresh-token");
+        testUser.setRefreshTokenExpiry(Instant.now().plus(1, ChronoUnit.DAYS));
+        when(userRepository.findByRefreshToken("valid-refresh-token")).thenReturn(Optional.of(testUser));
+
+        // Mock TenantContext to return null
+        try (MockedStatic<TenantContext> mockedTenantContext = Mockito.mockStatic(TenantContext.class)) {
+            mockedTenantContext.when(TenantContext::getCurrentTenant).thenReturn(null); // No tenant in context
+
+            // Act & Assert
+            // Expect BadCredentialsException because the service throws it when tenantId is missing
+            assertThrows(BadCredentialsException.class, () -> authService.refreshToken(refreshTokenRequest));
+        }
+
+        // Verify user was NOT saved
+        verify(userRepository, never()).save(any(User.class));
+    }
+
+
+    @Test
+    void refreshToken_shouldFail_whenTokenIsExpired() {
+        // Arrange
+        testUser.setRefreshToken("expired-refresh-token");
+        testUser.setRefreshTokenExpiry(Instant.now().minus(1, ChronoUnit.DAYS)); // Expired yesterday
+        refreshTokenRequest.setRefreshToken("expired-refresh-token");
+
+        when(userRepository.findByRefreshToken("expired-refresh-token")).thenReturn(Optional.of(testUser));
+
+        // Act & Assert
+        assertThrows(BadCredentialsException.class, () -> authService.refreshToken(refreshTokenRequest));
+
+        // Verify user was saved (to clear the expired token)
+        verify(userRepository, times(1)).save(testUser);
+        assertThat(testUser.getRefreshToken()).isNull();
+        assertThat(testUser.getRefreshTokenExpiry()).isNull();
+    }
+
+    @Test
+    void refreshToken_shouldFail_whenTokenIsInvalid() {
+        // Arrange
+        refreshTokenRequest.setRefreshToken("invalid-token");
+        when(userRepository.findByRefreshToken("invalid-token")).thenReturn(Optional.empty());
+
+        // Act & Assert
+        assertThrows(BadCredentialsException.class, () -> authService.refreshToken(refreshTokenRequest));
+
+        // Verify user was NOT saved
+        verify(userRepository, never()).save(any(User.class));
+    }
+
 }
+
