@@ -106,25 +106,24 @@ public class AuthService {
         User user = userRepository.findByEmail(request.getEmail())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found after authentication"));
 
-        // CRITICAL CHANGE: Find the Organization(s) the user belongs to
+
         List<Membership> memberships = membershipRepository.findByUserId(user.getId());
         if (memberships.isEmpty()) {
-            // Should not happen if registration is correct, but handle it
+
             log.error("User {} authenticated but has no organization memberships.", user.getEmail());
             throw new IllegalStateException("User has no organization membership.");
         }
 
-        // *** Simplification for now: Use the *first* organization found ***
-        // In a real multi-org app, you'd need a way for the user to select which org to log into.
+
         Membership firstMembership = memberships.get(0);
         Organization organization = organizationRepository.findById(firstMembership.getOrganizationId())
                 .orElseThrow(() -> new IllegalStateException("Organization not found for membership."));
 
-        // Generate Tokens using the Organization's Tenant ID
-        String accessToken = jwtService.generateAccessToken(user, organization.getTenantId()); // Use Org's tenantId
+
+        String accessToken = jwtService.generateAccessToken(user, organization.getTenantId());
         String refreshToken = jwtService.generateRefreshToken(user);
 
-        // Save refresh token to user (as before)
+
         user.setRefreshToken(refreshToken);
         user.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());
         userRepository.save(user);
@@ -135,10 +134,6 @@ public class AuthService {
                 .build();
     }
 
-    // --- Refresh Token Logic ---
-    // Needs modification if user can belong to multiple orgs.
-    // For now, it assumes the *new* access token should be for the *same* tenantId
-    // as the *old* one (which is implicitly stored in TenantContext if the old token was valid).
     @Transactional
     public AuthResponse refreshToken(RefreshTokenRequest request) {
         String requestRefreshToken = request.getRefreshToken();
@@ -153,20 +148,16 @@ public class AuthService {
             throw new BadCredentialsException("Refresh token has expired");
         }
 
-        // *** Need the tenantId to generate the new access token ***
-        // Get it from the current context (set by the *old* access token's filter run)
         String currentTenantId = TenantContext.getCurrentTenant();
         if (currentTenantId == null) {
-            // Fallback: If context is missing, maybe fetch the user's first org again? Risky.
-            // Better to enforce that refresh must happen while an old token is still somewhat valid.
             log.warn("Cannot refresh token for user {} without tenantId in context.", user.getEmail());
             throw new BadCredentialsException("Cannot determine tenant context for refresh.");
         }
 
-        // Generate new access token for the SAME tenant
+
         String newAccessToken = jwtService.generateAccessToken(user, currentTenantId);
 
-        // Rotate the refresh token
+
         String newRefreshToken = jwtService.generateRefreshToken(user);
         user.setRefreshToken(newRefreshToken);
         user.setRefreshTokenExpiry(jwtService.getRefreshTokenExpiry());
