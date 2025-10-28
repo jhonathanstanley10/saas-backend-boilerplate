@@ -1,0 +1,70 @@
+version: '3.8' # Use a modern version of Compose file format
+
+services:
+  # Database Service (PostgreSQL)
+  db:
+    image: postgres:15 # Use the same version as your CI workflow
+    container_name: saas-postgres-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-saas_db} # Database name
+      POSTGRES_USER: ${DB_USERNAME:-postgres} # Database user
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password} # Database password
+    ports:
+      - "5432:5432" # Map host port 5432 to container port 5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/data # Persist data outside the container
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s # Give the DB some time to initialize initially
+    networks:
+      - saas-network
+
+  # Backend Application Service
+  app:
+    build: . # Build the image using the Dockerfile in the current directory
+    container_name: saas-backend-app
+    ports:
+      - "8080:8080" # Map host port 8080 to container port 8080
+    environment:
+      # --- Database Connection ---
+      # IMPORTANT: Use the service name 'db' as the hostname
+      SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${DB_NAME:-saas_db}
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-password}
+
+      # --- JWT Secret ---
+      APPLICATION_JWT_SECRET_KEY: ${APPLICATION_JWT_SECRET_KEY} # Read from .env file
+
+      # --- Stripe Keys ---
+      STRIPE_API_SECRET_KEY: ${STRIPE_API_SECRET_KEY} # Read from .env file
+      STRIPE_API_PRICE_ID: ${STRIPE_API_PRICE_ID} # Read from .env file
+      STRIPE_API_WEBHOOK_SECRET: ${STRIPE_API_WEBHOOK_SECRET} # Read from .env file
+
+      # --- Email Credentials ---
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-smtp.gmail.com}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME} # Read from .env file
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD} # Read from .env file
+
+      # --- Other ---
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
+      SERVER_PORT: 8080 # Explicitly set in case the Dockerfile EXPOSE changes
+
+    depends_on:
+      db:
+        condition: service_healthy # Wait for the db healthcheck to pass
+    networks:
+      - saas-network
+
+# Define the network connecting the services
+networks:
+  saas-network:
+    driver: bridge
+
+# Define the named volume for database persistence
+volumes:
+  postgres-data:
+    driver: local
