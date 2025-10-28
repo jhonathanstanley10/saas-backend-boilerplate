@@ -12,8 +12,8 @@ export class BillingService {
 
   createCheckoutSession(): Observable<{ url: string }> {
     const payload = {
-      successUrl: `${window.location.origin}/billing?payment_success=true`,
-      cancelUrl: `${window.location.origin}/billing`,
+      successUrl: `${window.location.origin}/app/billing?payment_success=true`,
+      cancelUrl: `${window.location.origin}/app/billing`,
     };
     return this.http.post<{ url: string }>(
       `${this.apiUrl}/create-checkout-session`,
@@ -23,8 +23,9 @@ export class BillingService {
 
   createPortalSession(): Observable<{ url: string }> {
     const payload = {
-      returnUrl: window.location.origin,
+      returnUrl: `${window.location.origin}/app/billing`
     };
+    console.log(`${window.location.origin}/app/billing`)
     return this.http.post<{ url: string }>(
       `${this.apiUrl}/create-portal-session`,
       payload
