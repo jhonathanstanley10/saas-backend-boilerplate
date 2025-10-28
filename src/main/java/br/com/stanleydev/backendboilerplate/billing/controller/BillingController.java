@@ -75,7 +75,7 @@ public class BillingController {
             return ResponseEntity.ok(Map.of("url", portalSession.getUrl()));
 
         } catch (StripeException e) {
-            log.error("Stripe error creating portal session: {}", e.getMessage(), e);
+            log.error("Stripe API error during portal session creation for customer {}", e.getMessage());
             return ResponseEntity.status(500).body(Map.of("error", "Error creating customer portal session."));
         } catch (IllegalStateException e) {
             log.warn("User {} tried to access portal without Stripe customer ID", user.getEmail());
@@ -89,7 +89,7 @@ public class BillingController {
             throw new IllegalStateException("User is not part of any organization.");
         }
 
-        UUID organizationId = memberships.get(0).getOrganizationId();
+        UUID organizationId = memberships.getFirst().getOrganizationId();
         return organizationRepository.findById(organizationId)
                 .orElseThrow(() -> new IllegalStateException("Organization not found for user's membership."));
     }
