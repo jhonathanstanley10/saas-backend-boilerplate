@@ -1,70 +1,79 @@
-version: '3.8' # Use a modern version of Compose file format
+# docker-compose.yaml (Revised)
+version: '3.8'
 
 services:
-  # Database Service (PostgreSQL)
+  # --- Database Service (Unchanged) ---
   db:
-    image: postgres:15 # Use the same version as your CI workflow
+    image: postgres:15
     container_name: saas-postgres-db
     environment:
-      POSTGRES_DB: ${DB_NAME:-saas_db} # Database name
-      POSTGRES_USER: ${DB_USERNAME:-postgres} # Database user
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-password} # Database password
+      POSTGRES_DB: ${DB_NAME:-saas_db}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
     ports:
-      - "5432:5432" # Map host port 5432 to container port 5432
+      - "5432:5432"
     volumes:
-      - postgres-data:/var/lib/postgresql/data # Persist data outside the container
+      - postgres-data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 10s # Give the DB some time to initialize initially
+      start_period: 10s
     networks:
       - saas-network
 
-  # Backend Application Service
+  # --- Backend Application Service (app) ---
   app:
-    build: . # Build the image using the Dockerfile in the current directory
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: saas-backend-app
-    ports:
-      - "8080:8080" # Map host port 8080 to container port 8080
+    # No ports exposed directly
     environment:
-      # --- Database Connection ---
-      # IMPORTANT: Use the service name 'db' as the hostname
       SPRING_DATASOURCE_URL: jdbc:postgresql://db:5432/${DB_NAME:-saas_db}
       DB_USERNAME: ${DB_USERNAME:-postgres}
       DB_PASSWORD: ${DB_PASSWORD:-password}
-
-      # --- JWT Secret ---
-      APPLICATION_JWT_SECRET_KEY: ${APPLICATION_JWT_SECRET_KEY} # Read from .env file
-
-      # --- Stripe Keys ---
-      STRIPE_API_SECRET_KEY: ${STRIPE_API_SECRET_KEY} # Read from .env file
-      STRIPE_API_PRICE_ID: ${STRIPE_API_PRICE_ID} # Read from .env file
-      STRIPE_API_WEBHOOK_SECRET: ${STRIPE_API_WEBHOOK_SECRET} # Read from .env file
-
-      # --- Email Credentials ---
+      APPLICATION_JWT_SECRET_KEY: ${APPLICATION_JWT_SECRET_KEY}
+      STRIPE_API_SECRET_KEY: ${STRIPE_API_SECRET_KEY}
+      STRIPE_API_PRICE_ID: ${STRIPE_API_PRICE_ID}
+      STRIPE_API_WEBHOOK_SECRET: ${STRIPE_API_WEBHOOK_SECRET}
       SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-smtp.gmail.com}
       SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-587}
-      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME} # Read from .env file
-      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD} # Read from .env file
-
-      # --- Other ---
-      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
-      SERVER_PORT: 8080 # Explicitly set in case the Dockerfile EXPOSE changes
-
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD}
+      # !! IMPORTANT: Update FRONTEND_BASE_URL if Nginx is not on localhost:80 !!
+      # If you map Nginx to 8081:80, this should be http://localhost:8081
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost}
+      SERVER_PORT: 8080
     depends_on:
       db:
-        condition: service_healthy # Wait for the db healthcheck to pass
+        condition: service_healthy
     networks:
       - saas-network
 
-# Define the network connecting the services
+  # --- Nginx Reverse Proxy & Frontend Service ---
+  nginx:
+    # !! CHANGED: Build the frontend image directly !!
+    build:
+      context: ./frontend-boilerplate # Use frontend directory as context
+      dockerfile: Dockerfile         # Use the Dockerfile inside frontend-boilerplate/
+    container_name: saas-nginx-proxy
+    ports:
+      - "80:80" # Map host port 80 to Nginx container port 80
+      # Change host port if 80 is busy (e.g., "8081:80")
+    depends_on:
+      - app      # Nginx still needs the backend to proxy API calls
+    networks:
+      - saas-network
+
 networks:
   saas-network:
     driver: bridge
 
-# Define the named volume for database persistence
 volumes:
   postgres-data:
     driver: local
+  # !! REMOVED frontend-static-files volume definition !!
+  # frontend-static-files:
+  #   driver: local
