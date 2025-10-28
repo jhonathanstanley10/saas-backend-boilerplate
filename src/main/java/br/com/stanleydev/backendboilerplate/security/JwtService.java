@@ -1,10 +1,13 @@
 package br.com.stanleydev.backendboilerplate.security;
 
+import br.com.stanleydev.backendboilerplate.email.EmailService;
 import br.com.stanleydev.backendboilerplate.user.model.User;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.io.Decoders;
 import io.jsonwebtoken.security.Keys;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Service;
@@ -18,6 +21,8 @@ import java.util.function.Function;
 
 @Service
 public class JwtService {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtService.class);
 
     @Value("${application.jwt.secret-key}")
     private String secretKey;
@@ -41,13 +46,17 @@ public class JwtService {
         return claimsResolver.apply(claims);
     }
 
-    public String generateAccessToken(UserDetails userDetails) {
-        return generateAccessToken(new HashMap<>(), userDetails);
+    public String generateAccessToken(UserDetails userDetails, String tenantId) {
+        return generateAccessToken(new HashMap<>(), userDetails, tenantId);
     }
 
-    public String generateAccessToken(Map<String, Object> extraClaims, UserDetails userDetails) {
-        if (userDetails instanceof User) {
-            extraClaims.put("tenantId", ((User) userDetails).getTenantId());
+    public String generateAccessToken(Map<String, Object> extraClaims, UserDetails userDetails, String tenantId) {
+        // Add the tenantId as a custom claim - NOW PASSED IN
+        if (tenantId != null) {
+            extraClaims.put("tenantId", tenantId);
+        } else {
+            // Handle case where tenantId might be missing? Log warning?
+            log.warn("Generating access token without tenantId for user {}", userDetails.getUsername());
         }
 
         return Jwts.builder()

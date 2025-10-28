@@ -42,15 +42,6 @@ public class User implements UserDetails {
     @Column(nullable = false)
     private Role role;
 
-    @Column(nullable = false, updatable = false)
-    private String tenantId;
-
-    @Column(unique = true)
-    private String stripeCustomerId;
-
-    @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
-    private SubscriptionStatus subscriptionStatus = SubscriptionStatus.FREE;
 
     @Column(nullable = true, length = 512)
     private String refreshToken;

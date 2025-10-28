@@ -1,5 +1,10 @@
 package br.com.stanleydev.backendboilerplate.billing.service;
 
+import br.com.stanleydev.backendboilerplate.organization.model.Membership;
+import br.com.stanleydev.backendboilerplate.organization.model.Organization;
+import br.com.stanleydev.backendboilerplate.organization.model.OrganizationRole;
+import br.com.stanleydev.backendboilerplate.organization.repository.MembershipRepository;
+import br.com.stanleydev.backendboilerplate.organization.repository.OrganizationRepository;
 import br.com.stanleydev.backendboilerplate.user.model.SubscriptionStatus;
 import br.com.stanleydev.backendboilerplate.user.model.User;
 import br.com.stanleydev.backendboilerplate.user.repository.UserRepository;
@@ -19,6 +24,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +34,11 @@ public class StripeService {
     private static final Logger log = LoggerFactory.getLogger(StripeService.class);
 
     private final UserRepository userRepository;
+
+    private final OrganizationRepository organizationRepository;
+
+    private final MembershipRepository membershipRepository;
+
 
     @Value("${stripe.api.secret-key}")
     private String stripeSecretKey;
@@ -43,22 +55,23 @@ public class StripeService {
     }
 
     @Transactional
-    public Session createCheckoutSession(User user, String successUrl, String cancelUrl) throws StripeException {
+    public Session createCheckoutSession(Organization organization, String successUrl, String cancelUrl) throws StripeException {
 
-        String stripeCustomerId = user.getStripeCustomerId();
+        String stripeCustomerId = organization.getStripeCustomerId();
         if (stripeCustomerId == null) {
 
+            String ownerEmail = findOwnerEmail(organization.getId());
 
-            CustomerCreateParams customerParams =
-                    CustomerCreateParams.builder()
-                            .setEmail(user.getEmail())
-                            .setName(user.getEmail())
-                            .build();
+            CustomerCreateParams.Builder customerParamsBuilder = CustomerCreateParams.builder()
+                    .setName(organization.getName());
+            if (ownerEmail != null) {
+                customerParamsBuilder.setEmail(ownerEmail);
+            }
 
-            Customer customer = Customer.create(customerParams);
+            Customer customer = Customer.create(customerParamsBuilder.build());
             stripeCustomerId = customer.getId();
-            user.setStripeCustomerId(stripeCustomerId);
-            userRepository.save(user);
+            organization.setStripeCustomerId(stripeCustomerId);
+            organizationRepository.save(organization);
         }
 
 
@@ -101,7 +114,7 @@ public class StripeService {
                 Subscription subscription = (Subscription) stripeObject;
                 String stripeCustomerId = subscription.getCustomer();
                 String status = subscription.getStatus();
-                updateSubscriptionStatus(stripeCustomerId, status);
+                updateOrganizationSubscriptionStatus(stripeCustomerId, status);
                 break;
             }
             case "customer.subscription.updated": {
@@ -110,7 +123,7 @@ public class StripeService {
                 String stripeCustomerId = subscription.getCustomer();
                 String status = subscription.getStatus();
 
-                updateSubscriptionStatus(stripeCustomerId, status);
+                updateOrganizationSubscriptionStatus(stripeCustomerId, status);
                 break;
             }
             case "customer.subscription.deleted": {
@@ -118,7 +131,7 @@ public class StripeService {
                 Subscription subscription = (Subscription) stripeObject;
                 String stripeCustomerId = subscription.getCustomer();
 
-                updateSubscriptionStatus(stripeCustomerId, "canceled");
+                updateOrganizationSubscriptionStatus(stripeCustomerId, "canceled");
                 break;
             }
             default:
@@ -126,34 +139,55 @@ public class StripeService {
         }
     }
 
-    private void updateSubscriptionStatus(String stripeCustomerId, String stripeStatus) {
-        User user = userRepository.findByStripeCustomerId(stripeCustomerId)
-                .orElseThrow(() -> new RuntimeException("User with Stripe Customer ID " + stripeCustomerId + " not found."));
+    private void updateOrganizationSubscriptionStatus(String stripeCustomerId, String stripeStatus) {
+        Organization organization = organizationRepository.findByStripeCustomerId(stripeCustomerId)
+                .orElseThrow(() -> new RuntimeException("Organization with Stripe Customer ID " + stripeCustomerId + " not found."));
 
-        log.info("Status:" + stripeStatus);
-        if (Objects.equals(stripeStatus, "active")) {
-            user.setSubscriptionStatus(SubscriptionStatus.PREMIUM);
-            log.info("User {} set to PREMIUM", user.getEmail());
+        log.info("Stripe status for Org {}: {}", organization.getId(), stripeStatus);
+        if ("active".equals(stripeStatus) || "trialing".equals(stripeStatus)) {
+            organization.setSubscriptionStatus(SubscriptionStatus.PREMIUM);
+            log.info("Organization {} set to PREMIUM", organization.getId());
         } else {
-            user.setSubscriptionStatus(SubscriptionStatus.FREE);
-            log.info("User {} set to FREE", user.getEmail());
+            // "canceled", "incomplete_expired", "unpaid", "past_due", etc.
+            organization.setSubscriptionStatus(SubscriptionStatus.FREE);
+            log.info("Organization {} set to FREE", organization.getId());
         }
-        userRepository.save(user);
+        organizationRepository.save(organization);
     }
 
     @Transactional(readOnly = true)
-    public com.stripe.model.billingportal.Session createPortalSession(User user, String returnUrl) throws StripeException {
-
-        String stripeCustomerId = user.getStripeCustomerId();
+    public com.stripe.model.billingportal.Session createPortalSession(Organization organization, String returnUrl) throws StripeException {
+        String stripeCustomerId = organization.getStripeCustomerId();
         if (stripeCustomerId == null) {
-            throw new IllegalStateException("User has no Stripe customer ID.");
+            throw new IllegalStateException("Organization has no Stripe customer ID.");
+        }
+        com.stripe.param.billingportal.SessionCreateParams params =
+                com.stripe.param.billingportal.SessionCreateParams.builder()
+                        .setCustomer(stripeCustomerId)
+                        .setReturnUrl(returnUrl)
+                        .build();
+        return com.stripe.model.billingportal.Session.create(params);
+    }
+
+    private String findOwnerEmail(UUID organizationId) {
+        // Find the membership record for the owner
+        Optional<Membership> ownerMembershipOpt = membershipRepository.findByOrganizationIdAndRole(organizationId, OrganizationRole.OWNER);
+
+        if (ownerMembershipOpt.isEmpty()) {
+            log.error("Could not find OWNER membership for organization ID: {}", organizationId);
+            return null; // Or throw an exception if this is critical
         }
 
-        com.stripe.param.billingportal.SessionCreateParams params = com.stripe.param.billingportal.SessionCreateParams.builder()
-                .setCustomer(stripeCustomerId)
-                .setReturnUrl(returnUrl)
-                .build();
+        UUID ownerUserId = ownerMembershipOpt.get().getUserId();
 
-        return com.stripe.model.billingportal.Session.create(params);
+        // Find the user associated with that membership
+        Optional<User> ownerUserOpt = userRepository.findById(ownerUserId);
+
+        if (ownerUserOpt.isEmpty()) {
+            log.error("Could not find User with ID {} who is OWNER of org {}", ownerUserId, organizationId);
+            return null; // Or throw an exception
+        }
+
+        return ownerUserOpt.get().getEmail();
     }
 }

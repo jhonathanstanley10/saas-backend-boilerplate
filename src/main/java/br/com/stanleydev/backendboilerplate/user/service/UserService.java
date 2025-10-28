@@ -20,7 +20,6 @@ public class UserService {
                 .email(user.getEmail())
                 .firstName(user.getFirstName())
                 .lastName(user.getLastName())
-                .subscriptionStatus(user.getSubscriptionStatus())
                 .build();
     }
 
